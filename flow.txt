@@ -1,0 +1,100 @@
+// from gertjaap gist; description of current messages / flow for lit DLC negotiation
+
+// Structure for storing the contract data
+
+type DlcContract struct {
+	Idx                                  uint64                    // Index of the contract for referencing in commands
+	ContractPubKey			     [33]byte		       // Unique key for the contract so we can reference it in messages (accept/decline) in case we have more than one contract between two peers
+	CoinType                             uint32                    // Coin type
+	OracleA			             [33]byte                  // Pub keys of the oracle
+	OracleR				     [33]byte		       // Pub key of the data point we are using
+	OracleTimestamp      		     uint64                    // Expected timestamp (epoch) of publication
+	ValueAllOurs, ValueAllTheirs         uint64                    // The values of the data point based on which all money in the contract goes to either party
+	OurFundingAmount, TheirFundingAmount uint64                    // The amounts either side are funding
+	OurPayoutPKH, TheirPayoutPKH         [20]byte                  // PKH to which the contract is supposed to pay out
+	RemoteNodePub                        [33]byte                  // Pubkey of the peer we've offered the contract to or received the contract from
+	Status                               DlcContractStatus         // Status of the contract (enum)
+	OurFundingInputs, TheirFundingInputs []DlcContractFundingInput // Outpoints used to fund the contract
+}
+
+// Signature for a particular settlement transaction
+type DlcContractSettlementSignature struct {
+        Outcome                              uint64                    // The oracle value for which transaction these are the signatures
+        Signature                            [64]byte                  // The signature for the transaction
+}
+
+1       A -> B                  Contract offer message
+                                ---
+                                Contract        DlcContract             // The contract description
+                                
+2       B -> A                  Contract decline message
+                                ---
+                                ContractPK      [33]byte                // The unique key of the contract
+
+
+(or) 2  B -> A                  Contract accept message
+                                ---
+                                ContractPK              [33]byte                                // The unique key of the contract
+                                FundingInputs           []DlcContractFundingInput               // B's funding inputs
+                                SettlementSignatures    []DlcContractSettlementSignature        // B's signatures for the settlement transactions (! not for funding)
+                        
+3       A -> B                  Contract acknowledgement message
+                                ---
+                                ContractPK              [33]byte                                // The unique key of the contract
+                                SettlementSignatures    []DlcContractSettlementSignature        // A's signatures for the settlement transactions
+        
+4       B -> A                  Contract funding signatures message
+                                ---
+                                ContractPK        [33]byte      // The unique key of the contract
+                                FundingSignatures [][64]byte    // B's signatures for funding
+                                
+5       A -> B                  Contract Sigproof message
+                                ---
+                                ContractPK        [33]byte      // The unique key of the contract
+                                Signature         [64]byte      // A's signatures for funding
+                                
+6       A                       broadcasts the funding TX
+        
+7       O                       publishes the signature for the oraclized value
+    
+=== "Hostile" settlement (either party can initiate) ===
+
+8       A                       publishes the settlement TX belonging to the correct oraclized value
+
+9       A                       publishes a transaction spending from the contract output back to a P2WPKH output inside his wallet
+
+10      A -> B                  Contract Claimed message
+                                ---
+                                ContractPK          [33]byte
+                                
+
+
+10      B                       publishes a transaction spending from the contract output back to a P2WPKH output inside his wallet                       
+
+=== "Rogue" settlement ===
+
+8       A                       publishes the settlement TX belonging to an incorrect value (not the value signed by the oracle)
+
+9       B                       (watchtower?) detects the invalid settlement and prepares a claim TX to be broadcast once the locktime expires back to a P2WPKH output inside his wallet
+
+~~ locktime expires ~~
+
+10      B                       claims all funds in the contract to a P2WPKH output inside his wallet
+
+=== (optional) "Friendly" settlement (mutually agreed) ===        
+        
+8       A -> B                  Contract Settlement message
+                                ---
+                                ContractPK           [33]byte      // The unique key of the contract
+                                Value                uint64        // The value we're settling for
+                                SignedSettlementTx   *wire.MsgTx   // The transaction spending from the contract according to Value, with A's signature
+                                
+9       B -> A                  Contract Settlement Ack message
+                                ---
+                                ContractPK           [33]byte      // The unique key of the contract
+                                Signature            [64]byte      // B's signature for the settlement TX
+                                
+10      A                       broadcasts the settlement TX
+
+
+        
